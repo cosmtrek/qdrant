@@ -86,8 +86,10 @@ impl PayloadIndex for PlainPayloadIndex {
     fn set_indexed(
         &mut self,
         field: PayloadKeyTypeRef,
-        payload_schema: PayloadFieldSchema,
+        payload_schema: impl Into<PayloadFieldSchema>,
     ) -> OperationResult<()> {
+        let payload_schema = payload_schema.into();
+
         if let Some(prev_schema) = self
             .config
             .indexed_fields
@@ -201,6 +203,7 @@ impl PayloadIndex for PlainPayloadIndex {
     }
 }
 
+#[derive(Debug)]
 pub struct PlainIndex {
     id_tracker: Arc<AtomicRefCell<IdTrackerSS>>,
     vector_storage: Arc<AtomicRefCell<VectorStorageEnum>>,

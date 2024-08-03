@@ -1,10 +1,12 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 //use atomic_refcell::{AtomicRef, AtomicRefCell};
 use rocksdb::{ColumnFamily, DBRecoveryMode, LogLevel, Options, WriteOptions, DB};
 
+use super::rocksdb_buffered_delete_wrapper::DatabaseColumnScheduledDeleteWrapperIterator;
 //use crate::common::arc_rwlock_iterator::ArcRwLockIterator;
 use crate::common::operation_error::{OperationError, OperationResult};
 use crate::common::Flusher;
@@ -21,10 +23,10 @@ pub const DB_VERSIONS_CF: &str = "version";
 /// If there is no Column Family specified, key-value pair is associated with Column Family "default".
 pub const DB_DEFAULT_CF: &str = "default";
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DatabaseColumnWrapper {
-    pub database: Arc<RwLock<DB>>,
-    pub column_name: String,
+    database: Arc<RwLock<DB>>,
+    column_name: String,
 }
 
 pub struct DatabaseColumnIterator<'a> {
@@ -90,28 +92,6 @@ pub fn open_db_with_existing_cf(path: &Path) -> Result<Arc<RwLock<DB>>, rocksdb:
     };
     let db = DB::open_cf(&db_options(), path, existing_column_families)?;
     Ok(Arc::new(RwLock::new(db)))
-}
-
-pub fn create_db_cf_if_not_exists(
-    db: Arc<RwLock<DB>>,
-    store_cf_name: &str,
-) -> Result<(), rocksdb::Error> {
-    let mut db_mut = db.write();
-    if db_mut.cf_handle(store_cf_name).is_none() {
-        db_mut.create_cf(store_cf_name, &db_options())?;
-    }
-    Ok(())
-}
-
-pub fn recreate_cf(db: Arc<RwLock<DB>>, store_cf_name: &str) -> Result<(), rocksdb::Error> {
-    let mut db_mut = db.write();
-
-    if db_mut.cf_handle(store_cf_name).is_some() {
-        db_mut.drop_cf(store_cf_name)?;
-    }
-
-    db_mut.create_cf(store_cf_name, &db_options())?;
-    Ok(())
 }
 
 impl DatabaseColumnWrapper {
@@ -254,11 +234,30 @@ impl DatabaseColumnWrapper {
             ))
         })
     }
+
+    pub fn get_database(&self) -> Arc<RwLock<DB>> {
+        self.database.clone()
+    }
+
+    pub fn get_column_name(&self) -> &str {
+        &self.column_name
+    }
 }
 
 impl<'a> LockedDatabaseColumnWrapper<'a> {
-    pub fn iter(&self) -> OperationResult<DatabaseColumnIterator> {
+    pub fn iter(&'a self) -> OperationResult<DatabaseColumnIterator> {
         DatabaseColumnIterator::new(&self.guard, self.column_name)
+    }
+
+    pub fn iter_pending_deletes(
+        &'a self,
+        pending_deletes: Arc<Mutex<HashSet<Vec<u8>>>>,
+    ) -> OperationResult<DatabaseColumnScheduledDeleteWrapperIterator> {
+        DatabaseColumnScheduledDeleteWrapperIterator::new(
+            &self.guard,
+            self.column_name,
+            pending_deletes,
+        )
     }
 }
 

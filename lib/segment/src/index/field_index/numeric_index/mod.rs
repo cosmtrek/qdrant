@@ -20,8 +20,7 @@ use serde_json::Value;
 use self::immutable_numeric_index::{ImmutableNumericIndex, NumericIndexKey};
 use super::utils::check_boundaries;
 use crate::common::operation_error::{OperationError, OperationResult};
-use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
-use crate::common::utils::bound_map;
+use crate::common::rocksdb_buffered_delete_wrapper::DatabaseColumnScheduledDeleteWrapper;
 use crate::common::Flusher;
 use crate::index::field_index::histogram::{Histogram, Numericable};
 use crate::index::field_index::stat_tools::estimate_multi_value_selection_cardinality;
@@ -153,7 +152,7 @@ impl<T: Encodable + Numericable + Default> NumericIndex<T> {
         }
     }
 
-    fn get_db_wrapper(&self) -> &DatabaseColumnWrapper {
+    fn get_db_wrapper(&self) -> &DatabaseColumnScheduledDeleteWrapper {
         match self {
             NumericIndex::Mutable(index) => index.get_db_wrapper(),
             NumericIndex::Immutable(index) => index.get_db_wrapper(),
@@ -356,8 +355,8 @@ impl<T: Encodable + Numericable + Default> PayloadFieldIndex for NumericIndex<T>
 
         Ok(match self {
             NumericIndex::Mutable(index) => {
-                let start_bound = bound_map(start_bound, |k| k.encode());
-                let end_bound = bound_map(end_bound, |k| k.encode());
+                let start_bound = start_bound.map(|k| k.encode());
+                let end_bound = end_bound.map(|k| k.encode());
                 Box::new(index.values_range(start_bound, end_bound))
             }
             NumericIndex::Immutable(index) => Box::new(index.values_range(start_bound, end_bound)),
@@ -547,8 +546,8 @@ where
 
         match self {
             NumericIndex::Mutable(index) => {
-                let start_bound = bound_map(start_bound, |k| k.encode());
-                let end_bound = bound_map(end_bound, |k| k.encode());
+                let start_bound = start_bound.map(|k| k.encode());
+                let end_bound = end_bound.map(|k| k.encode());
                 Box::new(index.orderable_values_range(start_bound, end_bound))
             }
             NumericIndex::Immutable(index) => {

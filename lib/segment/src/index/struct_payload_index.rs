@@ -26,7 +26,7 @@ use crate::index::query_optimization::payload_provider::PayloadProvider;
 use crate::index::struct_filter_context::StructFilterContext;
 use crate::index::visited_pool::VisitedPool;
 use crate::index::PayloadIndex;
-use crate::json_path::{JsonPath, JsonPathInterface as _};
+use crate::json_path::JsonPath;
 use crate::payload_storage::payload_storage_enum::PayloadStorageEnum;
 use crate::payload_storage::{FilterContext, PayloadStorage};
 use crate::telemetry::PayloadIndexTelemetry;
@@ -36,9 +36,8 @@ use crate::types::{
     PayloadKeyType, PayloadKeyTypeRef, PayloadSchemaType,
 };
 
-pub const PAYLOAD_FIELD_INDEX_PATH: &str = "fields";
-
 /// `PayloadIndex` implementation, which actually uses index structures for providing faster search
+#[derive(Debug)]
 pub struct StructPayloadIndex {
     /// Payload storage
     payload: Arc<AtomicRefCell<PayloadStorageEnum>>,
@@ -344,8 +343,10 @@ impl PayloadIndex for StructPayloadIndex {
     fn set_indexed(
         &mut self,
         field: PayloadKeyTypeRef,
-        payload_schema: PayloadFieldSchema,
+        payload_schema: impl Into<PayloadFieldSchema>,
     ) -> OperationResult<()> {
+        let payload_schema = payload_schema.into();
+
         if let Some(prev_schema) = self
             .config
             .indexed_fields

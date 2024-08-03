@@ -29,6 +29,7 @@ const DROP_DATA_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Object, which unifies the access to different types of segments, but still allows to
 /// access the original type of the segment if it is required for more efficient operations.
+#[derive(Clone, Debug)]
 pub enum LockedSegment {
     Original(Arc<RwLock<Segment>>),
     Proxy(Arc<RwLock<ProxySegment>>),
@@ -115,15 +116,6 @@ impl LockedSegment {
     }
 }
 
-impl Clone for LockedSegment {
-    fn clone(&self) -> Self {
-        match self {
-            LockedSegment::Original(x) => LockedSegment::Original(x.clone()),
-            LockedSegment::Proxy(x) => LockedSegment::Proxy(x.clone()),
-        }
-    }
-}
-
 impl From<Segment> for LockedSegment {
     fn from(s: Segment) -> Self {
         LockedSegment::Original(Arc::new(RwLock::new(s)))
@@ -136,7 +128,7 @@ impl From<ProxySegment> for LockedSegment {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SegmentHolder {
     appendable_segments: HashMap<SegmentId, LockedSegment>,
     non_appendable_segments: HashMap<SegmentId, LockedSegment>,
@@ -647,7 +639,7 @@ impl<'s> SegmentHolder {
     ///
     /// If there are unsaved changes after flush - detects lowest unsaved change version.
     /// If all changes are saved - returns max version.
-    pub fn flush_all(&self, sync: bool) -> OperationResult<SeqNumberType> {
+    pub fn flush_all(&self, sync: bool, force: bool) -> OperationResult<SeqNumberType> {
         // Grab and keep to segment RwLock's until the end of this function
         let segments = self.segment_locks(self.segment_flush_ordering())?;
 
@@ -697,7 +689,7 @@ impl<'s> SegmentHolder {
         // Flush and release each segment
         for read_segment in segment_reads {
             let segment_version = read_segment.version();
-            let segment_persisted_version = read_segment.flush(sync)?;
+            let segment_persisted_version = read_segment.flush(sync, force)?;
 
             if segment_version > segment_persisted_version {
                 has_unsaved = true;

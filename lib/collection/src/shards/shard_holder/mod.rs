@@ -14,6 +14,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{broadcast, RwLock};
 
 use super::replica_set::AbortShardTransfer;
+use super::resharding::tasks_pool::ReshardTasksPool;
 use super::resharding::ReshardState;
 use super::transfer::transfer_tasks_pool::TransferTasksPool;
 use crate::collection::payload_index_schema::PayloadIndexSchema;
@@ -23,7 +24,9 @@ use crate::hash_ring::HashRing;
 use crate::operations::shard_selector_internal::ShardSelectorInternal;
 use crate::operations::shared_storage_config::SharedStorageConfig;
 use crate::operations::snapshot_ops::SnapshotDescription;
-use crate::operations::types::{CollectionError, CollectionResult, ShardTransferInfo};
+use crate::operations::types::{
+    CollectionError, CollectionResult, ReshardingInfo, ShardTransferInfo,
+};
 use crate::operations::{OperationToShard, SplitByShard};
 use crate::optimizers_builder::OptimizersConfig;
 use crate::save_on_disk::SaveOnDisk;
@@ -216,13 +219,6 @@ impl ShardHolder {
         Ok(())
     }
 
-    /// Take shard
-    ///
-    /// remove shard and return ownership
-    pub fn take_shard(&mut self, shard_id: ShardId) -> Option<ShardReplicaSet> {
-        self.shards.remove(&shard_id)
-    }
-
     pub fn contains_shard(&self, shard_id: &ShardId) -> bool {
         self.shards.contains_key(shard_id)
     }
@@ -403,6 +399,28 @@ impl ShardHolder {
         shard_transfers
     }
 
+    pub fn get_resharding_operations_info(
+        &self,
+        tasks_pool: &ReshardTasksPool,
+    ) -> Vec<ReshardingInfo> {
+        let mut resharding_operations = vec![];
+
+        // We eventually expect to extend this to multiple concurrent operations, which is why
+        // we're using a list here
+        if let Some(resharding_state) = &*self.resharding_state.read() {
+            let status = tasks_pool.get_task_status(&resharding_state.key());
+            resharding_operations.push(ReshardingInfo {
+                shard_id: resharding_state.shard_id,
+                peer_id: resharding_state.peer_id,
+                shard_key: resharding_state.shard_key.clone(),
+                comment: status.map(|p| p.comment),
+            });
+        }
+
+        resharding_operations.sort_by_key(|k| k.shard_id);
+        resharding_operations
+    }
+
     pub fn get_related_transfers(
         &self,
         shard_id: &ShardId,
@@ -479,23 +497,6 @@ impl ShardHolder {
             }
         }
         Ok(res)
-    }
-
-    pub fn target_shard(
-        &self,
-        shard_selection: Option<ShardId>,
-    ) -> CollectionResult<Vec<&ShardReplicaSet>> {
-        match shard_selection {
-            None => Ok(self.all_shards().collect()),
-            Some(shard_selection) => {
-                let shard_opt = self.get_shard(&shard_selection);
-                let shards = match shard_opt {
-                    None => vec![],
-                    Some(shard) => vec![shard],
-                };
-                Ok(shards)
-            }
-        }
     }
 
     pub fn len(&self) -> usize {
@@ -719,15 +720,6 @@ impl ShardHolder {
             }
         }
         res
-    }
-
-    pub async fn is_all_active(&self) -> bool {
-        self.get_shards().all(|(_, replica_set)| {
-            replica_set
-                .peers()
-                .into_iter()
-                .all(|(_, state)| state == ReplicaState::Active)
-        })
     }
 
     /// Count how many shard replicas are on the given peer.

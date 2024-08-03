@@ -1,5 +1,6 @@
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -69,6 +70,7 @@ impl StorageVersion for SegmentVersion {
 /// - Keeps track of point versions
 /// - Persists data
 /// - Keeps track of occurred errors
+#[derive(Debug)]
 pub struct Segment {
     /// Latest update operation number, applied to this segment
     /// If None, there were no updates and segment is empty
@@ -97,6 +99,12 @@ pub struct VectorData {
     pub vector_index: Arc<AtomicRefCell<VectorIndexEnum>>,
     pub vector_storage: Arc<AtomicRefCell<VectorStorageEnum>>,
     pub quantized_vectors: Arc<AtomicRefCell<Option<QuantizedVectors>>>,
+}
+
+impl fmt::Debug for VectorData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VectorData").finish_non_exhaustive()
+    }
 }
 
 impl VectorData {
@@ -906,7 +914,7 @@ impl Segment {
 
         // Flush entire segment if needed
         if !internal_ids_to_delete.is_empty() {
-            self.flush(true)?;
+            self.flush(true, true)?;
         }
         Ok(())
     }
@@ -1504,7 +1512,7 @@ impl SegmentEntry for Segment {
         self.appendable_flag
     }
 
-    fn flush(&self, sync: bool) -> OperationResult<SeqNumberType> {
+    fn flush(&self, sync: bool, force: bool) -> OperationResult<SeqNumberType> {
         let current_persisted_version: Option<SeqNumberType> = *self.persisted_version.lock();
         if !sync && self.is_background_flushing() {
             return Ok(current_persisted_version.unwrap_or(0));
@@ -1517,7 +1525,7 @@ impl SegmentEntry for Segment {
                 return Ok(current_persisted_version.unwrap_or(0));
             }
             (Some(version), Some(persisted_version)) => {
-                if version == persisted_version {
+                if !force && version == persisted_version {
                     // Segment is already flushed
                     return Ok(persisted_version);
                 }
@@ -1539,7 +1547,7 @@ impl SegmentEntry for Segment {
 
         // Flush order is important:
         //
-        // 1. Flush id mapping. So during recovery the point will be recovered er in proper segment.
+        // 1. Flush id mapping. So during recovery the point will be recovered in proper segment.
         // 2. Flush vectors and payloads.
         // 3. Flush id versions last. So presence of version indicates that all other data is up-to-date.
         //
@@ -1676,7 +1684,7 @@ impl SegmentEntry for Segment {
                     segment
                         .payload_index
                         .borrow_mut()
-                        .set_indexed(key, schema_type.into())?;
+                        .set_indexed(key, schema_type)?;
                     Ok(true)
                 }
             },
@@ -1731,7 +1739,7 @@ impl SegmentEntry for Segment {
         }
 
         // flush segment to capture latest state
-        self.flush(true)?;
+        self.flush(true, false)?;
 
         // use temp_path for intermediary files
         let temp_path = temp_path.join(format!("segment-{}", Uuid::new_v4()));
@@ -1888,40 +1896,6 @@ mod tests {
     use crate::data_types::vectors::{only_default_vector, DEFAULT_VECTOR_NAME};
     use crate::segment_constructor::{build_segment, load_segment};
     use crate::types::{Distance, Indexes, SegmentConfig, VectorDataConfig, VectorStorageType};
-
-    // no longer valid since users are now allowed to store arbitrary json objects.
-    // TODO(gvelo): add tests for invalid payload types on indexed fields.
-    // #[test]
-    // fn test_set_invalid_payload_from_json() {
-    //     let data1 = r#"
-    //     {
-    //         "invalid_data"
-    //     }"#;
-    //     let data2 = r#"
-    //     {
-    //         "array": [1, "hello"],
-    //     }"#;
-    //
-    //     let dir = Builder::new().prefix("payload_dir").tempdir().unwrap();
-    //     let dim = 2;
-    //     let config = SegmentConfig {
-    //         vector_size: dim,
-    //         index: Indexes::Plain {},
-    //         payload_index: Some(PayloadIndexType::Plain),
-    //         storage_type: StorageType::InMemory,
-    //         distance: Distance::Dot,
-    //     };
-    //
-    //     let mut segment =
-    //         build_segment(dir.path(), &config, Arc::new(SchemaStorage::new())).unwrap();
-    //     segment.upsert_point(0, 0.into(), &[1.0, 1.0]).unwrap();
-    //
-    //     let result1 = segment.set_full_payload_with_json(0, 0.into(), &data1.to_string());
-    //     assert!(result1.is_err());
-    //
-    //     let result2 = segment.set_full_payload_with_json(0, 0.into(), &data2.to_string());
-    //     assert!(result2.is_err());
-    // }
 
     #[test]
     fn test_search_batch_equivalence_single() {
@@ -2213,10 +2187,10 @@ mod tests {
 
         let payload: Payload = serde_json::from_str(data).unwrap();
         segment.set_full_payload(0, 0.into(), &payload).unwrap();
-        segment.flush(false).unwrap();
+        segment.flush(false, false).unwrap();
 
         // call flush second time to check that background flush finished successful
-        segment.flush(true).unwrap();
+        segment.flush(true, false).unwrap();
     }
 
     #[test]

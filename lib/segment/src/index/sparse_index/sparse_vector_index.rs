@@ -41,6 +41,7 @@ use crate::vector_storage::{
 /// Whether to use the new compressed format.
 pub const USE_COMPRESSED: bool = true;
 
+#[derive(Debug)]
 pub struct SparseVectorIndex<TInvertedIndex: InvertedIndex> {
     config: SparseIndexConfig,
     id_tracker: Arc<AtomicRefCell<IdTrackerSS>>,
@@ -192,11 +193,6 @@ impl<TInvertedIndex: InvertedIndex> SparseVectorIndex<TInvertedIndex> {
         let inverted_index = TInvertedIndex::open(path)?;
         let indices_tracker = IndicesTracker::open(path)?;
         Ok((loaded_config, inverted_index, indices_tracker))
-    }
-
-    fn save_config(&self) -> OperationResult<()> {
-        let config_path = SparseIndexConfig::get_config_path(&self.path);
-        self.config.save(&config_path)
     }
 
     fn build_inverted_index(

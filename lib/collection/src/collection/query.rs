@@ -32,6 +32,23 @@ struct IntermediateQueryInfo<'a> {
 }
 
 impl Collection {
+    /// query is a special case of query_batch with a single batch
+    pub async fn query(
+        &self,
+        request: ShardQueryRequest,
+        read_consistency: Option<ReadConsistency>,
+        shard_selection: ShardSelectorInternal,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<Vec<ScoredPoint>> {
+        if request.limit == 0 {
+            return Ok(vec![]);
+        }
+        let results = self
+            .do_query_batch(vec![(request)], read_consistency, shard_selection, timeout)
+            .await?;
+        Ok(results.into_iter().next().unwrap())
+    }
+
     /// Returns a shape of [shard_id, batch_id, intermediate_response, points]
     async fn batch_query_shards_concurrently(
         &self,
@@ -99,9 +116,16 @@ impl Collection {
 
                 let result = if let Some(ScoringQuery::Fusion(fusion)) = &request.query {
                     // If the root query is a Fusion, the returned results correspond to each the prefetches.
-                    match fusion {
+                    let mut fused = match fusion {
                         Fusion::Rrf => rrf_scoring(merged_intermediates),
+                    };
+                    if let Some(score_threshold) = request.score_threshold {
+                        fused = fused
+                            .into_iter()
+                            .take_while(|point| point.score >= score_threshold)
+                            .collect();
                     }
+                    fused
                 } else {
                     // Otherwise, it will be a list with a single list of scored points.
                     debug_assert_eq!(merged_intermediates.len(), 1);

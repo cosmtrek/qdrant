@@ -1,7 +1,7 @@
 use std::cmp::max;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::{fmt, fs};
 
 use bitvec::prelude::BitSlice;
 use memmap2::MmapMut;
@@ -83,6 +83,16 @@ pub struct DynamicMmapFlags {
     flags_flusher: Arc<Mutex<Option<Flusher>>>,
     status: MmapType<DynamicMmapStatus>,
     directory: PathBuf,
+}
+
+impl fmt::Debug for DynamicMmapFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DynamicMmapFlags")
+            .field("flags", &self.flags)
+            .field("status", &self.status)
+            .field("directory", &self.directory)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Based on the number of flags determines the size of the mmap file.
@@ -216,15 +226,9 @@ impl DynamicMmapFlags {
 
     /// Count number of set flags
     pub fn count_flags(&self) -> usize {
-        let mut ones = self.flags.count_ones();
-
-        // Subtract flags in extra capacity we don't use
-        // They may have been set before shrinking the bitvec again
-        ones -= (self.status.len..self.flags.len())
-            .filter(|&i| self.get(i))
-            .count();
-
-        ones
+        // Take a bitslice of our set length, count ones in it
+        // This uses bit-indexing, returning a new bitslice, extra bits within capacity are not counted
+        self.flags[..self.status.len].count_ones()
     }
 
     /// Set the `true` value of the flag at the given index.

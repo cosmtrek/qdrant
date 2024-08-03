@@ -51,6 +51,8 @@ struct DriverState {
     key: ReshardKey,
     /// Stage each peer is currently in
     peers: HashMap<PeerId, Stage>,
+    /// List of shard IDs that must be migrated into the new shard
+    source_shard_ids: HashSet<ShardId>,
     /// List of shard IDs successfully migrated to the new shard
     migrated_shards: Vec<ShardId>,
     /// List of shard IDs in which we successfully deleted migrated points
@@ -58,10 +60,11 @@ struct DriverState {
 }
 
 impl DriverState {
-    pub fn new(key: ReshardKey, peers: &[PeerId]) -> Self {
+    pub fn new(key: ReshardKey, source_shard_ids: HashSet<ShardId>, peers: &[PeerId]) -> Self {
         Self {
             key,
             peers: HashMap::from_iter(peers.iter().map(|peer_id| (*peer_id, Stage::default()))),
+            source_shard_ids,
             migrated_shards: vec![],
             deleted_shards: vec![],
         }
@@ -114,8 +117,8 @@ impl DriverState {
     }
 
     /// Get all the shard IDs which points are sourced from.
-    pub fn source_shards(&self) -> impl Iterator<Item = ShardId> {
-        0..self.key.shard_id
+    pub fn source_shards(&self) -> impl Iterator<Item = ShardId> + '_ {
+        self.source_shard_ids.iter().copied()
     }
 
     /// Describe the current stage and state in a human readable string.
@@ -135,7 +138,7 @@ impl DriverState {
             Stage::S4_CommitHashring => "commit hash ring: switching reads and writes".into(),
             Stage::S5_PropagateDeletes => format!(
                 "propagate deletes: deleting migrated points from shards {:?}",
-                self.shards_to_migrate().collect::<Vec<_>>(),
+                self.shards_to_delete().collect::<Vec<_>>(),
             ),
             Stage::S6_Finalize => "finalize".into(),
             Stage::Finished => "finished".into(),
@@ -207,11 +210,26 @@ pub async fn drive_resharding(
     _temp_dir: &Path,
 ) -> CollectionResult<bool> {
     let to_shard_id = reshard_key.shard_id;
+    let hash_ring = shard_holder
+        .read()
+        .await
+        .rings
+        .get(&reshard_key.shard_key)
+        .cloned()
+        .unwrap();
     let resharding_state_path = resharding_state_path(&reshard_key, &collection_path);
     let state: PersistedState = SaveOnDisk::load_or_init(&resharding_state_path, || {
-        DriverState::new(reshard_key.clone(), &consensus.peers())
+        let mut shard_ids = hash_ring.unique_nodes();
+        shard_ids.remove(&reshard_key.shard_id);
+
+        DriverState::new(reshard_key.clone(), shard_ids, &consensus.peers())
     })?;
     progress.lock().description.replace(state.read().describe());
+
+    log::debug!(
+        "Resharding {collection_id}:{to_shard_id} from shards {:?}",
+        state.read().source_shards().collect::<Vec<_>>(),
+    );
 
     // Stage 1: init
     if !completed_init(&state) {
@@ -530,16 +548,28 @@ async fn migrate_local(
     );
 
     let progress = Arc::new(Mutex::new(TransferTaskProgress::new()));
-    transfer_resharding_stream_records(
-        shard_holder,
+    let result = transfer_resharding_stream_records(
+        Arc::clone(&shard_holder),
         progress,
         source_shard_id,
         target_shard,
         collection_id,
     )
-    .await?;
+    .await;
 
-    Ok(())
+    // Unproxify forward proxy on local shard we just transferred
+    // Normally consensus takes care of this, but we don't use consensus here
+    {
+        let shard_holder = shard_holder.read().await;
+        let replica_set = shard_holder.get_shard(&source_shard_id).ok_or_else(|| {
+            CollectionError::service_error(format!(
+                "Shard {source_shard_id} not found in the shard holder for resharding",
+            ))
+        })?;
+        replica_set.un_proxify_local().await?;
+    }
+
+    result
 }
 
 /// Stage 3: replicate to match replication factor
@@ -610,7 +640,7 @@ async fn stage_replicate(
             // Ensure we don't exceed the outgoing transfer limits
             let shard_holder = shard_holder.read().await;
             let (_, outgoing) = shard_holder.count_shard_transfer_io(&this_peer_id);
-            if outgoing < outgoing_limit {
+            if outgoing >= outgoing_limit {
                 log::trace!("Postponing resharding replication transfer to stay below transfer limit (outgoing: {outgoing})");
                 sleep(SHARD_TRANSFER_IO_LIMIT_RETRY_INTERVAL).await;
                 continue;
@@ -847,8 +877,10 @@ async fn stage_propagate_deletes(
             let operation =
                 CollectionUpdateOperations::PointOperation(PointOperations::DeletePoints { ids });
 
+            // Wait on all updates here, not just the last batch
+            // If we don't wait on all updates it somehow results in inconsistent deletes
             replica_set
-                .update_with_consistency(operation, offset.is_none(), WriteOrdering::Weak)
+                .update_with_consistency(operation, true, WriteOrdering::Weak)
                 .await?;
 
             if offset.is_none() {

@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::common::operation_error::{OperationError, OperationResult};
+use crate::common::rocksdb_buffered_delete_wrapper::DatabaseColumnScheduledDeleteWrapper;
 use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
 use crate::common::Flusher;
-use crate::data_types::text_index::TextIndexParams;
+use crate::data_types::index::TextIndexParams;
 use crate::index::field_index::full_text_index::inverted_index::{
     Document, InvertedIndex, ParsedQuery,
 };
@@ -23,7 +24,7 @@ use crate::types::{FieldCondition, Match, PayloadKeyType};
 
 pub struct FullTextIndex {
     inverted_index: InvertedIndex,
-    db_wrapper: DatabaseColumnWrapper,
+    db_wrapper: DatabaseColumnScheduledDeleteWrapper,
     config: TextIndexParams,
 }
 
@@ -70,7 +71,10 @@ impl FullTextIndex {
         is_appendable: bool,
     ) -> Self {
         let store_cf_name = Self::storage_cf_name(field);
-        let db_wrapper = DatabaseColumnWrapper::new(db, &store_cf_name);
+        let db_wrapper = DatabaseColumnScheduledDeleteWrapper::new(DatabaseColumnWrapper::new(
+            db,
+            &store_cf_name,
+        ));
         FullTextIndex {
             inverted_index: InvertedIndex::new(is_appendable),
             db_wrapper,
@@ -242,11 +246,11 @@ mod tests {
 
     use super::*;
     use crate::common::rocksdb_wrapper::open_db_with_existing_cf;
-    use crate::data_types::text_index::{TextIndexType, TokenizerType};
-    use crate::json_path::path;
+    use crate::data_types::index::{TextIndexType, TokenizerType};
+    use crate::json_path::JsonPath;
 
     fn filter_request(text: &str) -> FieldCondition {
-        FieldCondition::new_match(path("text"), Match::new_text(text))
+        FieldCondition::new_match(JsonPath::new("text"), Match::new_text(text))
     }
 
     #[rstest]

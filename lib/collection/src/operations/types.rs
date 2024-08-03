@@ -47,6 +47,7 @@ use super::ClockTag;
 use crate::config::{CollectionConfig, CollectionParams};
 use crate::operations::config_diff::{HnswConfigDiff, QuantizationConfigDiff};
 use crate::operations::query_enum::QueryEnum;
+use crate::operations::universal_query::shard_query::{ScoringQuery, ShardQueryRequest};
 use crate::save_on_disk;
 use crate::shards::replica_set::ReplicaState;
 use crate::shards::shard::{PeerId, ShardId};
@@ -203,6 +204,10 @@ pub struct CollectionClusterInfo {
     pub remote_shards: Vec<RemoteShardInfo>,
     /// Shard transfers
     pub shard_transfers: Vec<ShardTransferInfo>,
+    /// Resharding operations
+    // TODO(resharding): remove this skip when releasing resharding
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resharding_operations: Vec<ReshardingInfo>,
 }
 
 #[derive(Debug, Serialize, JsonSchema, Clone)]
@@ -227,6 +232,19 @@ pub struct ShardTransferInfo {
     pub method: Option<ShardTransferMethod>,
 
     /// A human-readable report of the transfer progress. Available only on the source peer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+pub struct ReshardingInfo {
+    pub shard_id: ShardId,
+
+    pub peer_id: PeerId,
+
+    pub shard_key: Option<ShardKey>,
+
+    /// A human-readable report of the operation progress. Available only on the source peer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }
@@ -261,7 +279,7 @@ pub struct RemoteShardInfo {
 
 /// `Acknowledged` - Request is saved to WAL and will be process in a queue.
 /// `Completed` - Request is completed, changes are actual.
-#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateStatus {
     Acknowledged,
@@ -271,7 +289,7 @@ pub enum UpdateStatus {
     ClockRejected,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct UpdateResult {
     /// Sequential number of the operation
@@ -327,10 +345,6 @@ pub struct ScrollRequestInternal {
 /// Scroll request, used as a part of query request
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryScrollRequestInternal {
-    /// Number of points to skip from the beginning of the result list
-    /// Warning: this is different from the offset in the regular scroll request
-    pub offset: usize,
-
     /// Page size. Default: 10
     pub limit: usize,
 
@@ -1178,19 +1192,6 @@ impl From<tempfile::PathPersistError> for CollectionError {
 pub type CollectionResult<T> = Result<T, CollectionError>;
 
 impl Record {
-    pub fn vector_names(&self) -> Vec<&str> {
-        match &self.vector {
-            None => vec![],
-            Some(vectors) => match vectors {
-                VectorStructInternal::Single(_) => vec![DEFAULT_VECTOR_NAME],
-                VectorStructInternal::MultiDense(_) => vec![DEFAULT_VECTOR_NAME],
-                VectorStructInternal::Named(vectors) => {
-                    vectors.keys().map(|x| x.as_str()).collect()
-                }
-            },
-        }
-    }
-
     pub fn get_vector_by_name(&self, name: &str) -> Option<VectorRef> {
         match &self.vector {
             Some(VectorStructInternal::Single(vector)) => {
@@ -1745,6 +1746,60 @@ impl From<SearchRequestInternal> for CoreSearchRequest {
             with_payload: request.with_payload,
             with_vector: request.with_vector,
             score_threshold: request.score_threshold,
+        }
+    }
+}
+
+impl From<SearchRequestInternal> for ShardQueryRequest {
+    fn from(value: SearchRequestInternal) -> Self {
+        let SearchRequestInternal {
+            vector,
+            filter,
+            score_threshold,
+            limit,
+            offset,
+            params,
+            with_vector,
+            with_payload,
+        } = value;
+
+        Self {
+            prefetches: vec![],
+            query: Some(ScoringQuery::Vector(QueryEnum::Nearest(vector.into()))),
+            filter,
+            score_threshold,
+            limit,
+            offset: offset.unwrap_or_default(),
+            params,
+            with_vector: with_vector.unwrap_or_default(),
+            with_payload: with_payload.unwrap_or_default(),
+        }
+    }
+}
+
+impl From<CoreSearchRequest> for ShardQueryRequest {
+    fn from(value: CoreSearchRequest) -> Self {
+        let CoreSearchRequest {
+            query,
+            filter,
+            score_threshold,
+            limit,
+            offset,
+            params,
+            with_vector,
+            with_payload,
+        } = value;
+
+        Self {
+            prefetches: vec![],
+            query: Some(ScoringQuery::Vector(query)),
+            filter,
+            score_threshold,
+            limit,
+            offset,
+            params,
+            with_vector: with_vector.unwrap_or_default(),
+            with_payload: with_payload.unwrap_or_default(),
         }
     }
 }

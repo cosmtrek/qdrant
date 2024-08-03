@@ -638,6 +638,29 @@ pub struct CollectionConfig {
 #[derive(serde::Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KeywordIndexParams {}
+#[derive(serde::Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IntegerIndexParams {
+    /// If true - support direct lookups.
+    #[prost(bool, tag = "1")]
+    pub lookup: bool,
+    /// If true - support ranges filters.
+    #[prost(bool, tag = "2")]
+    pub range: bool,
+}
+#[derive(serde::Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FloatIndexParams {}
+#[derive(serde::Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GeoIndexParams {}
+#[derive(serde::Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TextIndexParams {
     /// Tokenizer type
     #[prost(enumeration = "TokenizerType", tag = "1")]
@@ -655,19 +678,16 @@ pub struct TextIndexParams {
 #[derive(serde::Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct IntegerIndexParams {
-    /// If true - support direct lookups.
-    #[prost(bool, tag = "1")]
-    pub lookup: bool,
-    /// If true - support ranges filters.
-    #[prost(bool, tag = "2")]
-    pub range: bool,
-}
+pub struct BoolIndexParams {}
+#[derive(serde::Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DatetimeIndexParams {}
 #[derive(serde::Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PayloadIndexParams {
-    #[prost(oneof = "payload_index_params::IndexParams", tags = "1, 2")]
+    #[prost(oneof = "payload_index_params::IndexParams", tags = "3, 2, 4, 5, 1, 6, 7")]
     pub index_params: ::core::option::Option<payload_index_params::IndexParams>,
 }
 /// Nested message and enum types in `PayloadIndexParams`.
@@ -676,12 +696,27 @@ pub mod payload_index_params {
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum IndexParams {
-        /// Parameters for text index
-        #[prost(message, tag = "1")]
-        TextIndexParams(super::TextIndexParams),
+        /// Parameters for keyword index
+        #[prost(message, tag = "3")]
+        KeywordIndexParams(super::KeywordIndexParams),
         /// Parameters for integer index
         #[prost(message, tag = "2")]
         IntegerIndexParams(super::IntegerIndexParams),
+        /// Parameters for float index
+        #[prost(message, tag = "4")]
+        FloatIndexParams(super::FloatIndexParams),
+        /// Parameters for geo index
+        #[prost(message, tag = "5")]
+        GeoIndexParams(super::GeoIndexParams),
+        /// Parameters for text index
+        #[prost(message, tag = "1")]
+        TextIndexParams(super::TextIndexParams),
+        /// Parameters for bool index
+        #[prost(message, tag = "6")]
+        BoolIndexParams(super::BoolIndexParams),
+        /// Parameters for datetime index
+        #[prost(message, tag = "7")]
+        DatetimeIndexParams(super::DatetimeIndexParams),
     }
 }
 #[derive(serde::Serialize)]
@@ -910,6 +945,17 @@ pub struct ShardTransferInfo {
     /// If `true` transfer is a synchronization of a replicas; If `false` transfer is a moving of a shard from one peer to another
     #[prost(bool, tag = "4")]
     pub sync: bool,
+}
+#[derive(serde::Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReshardingInfo {
+    #[prost(uint32, tag = "1")]
+    pub shard_id: u32,
+    #[prost(uint64, tag = "2")]
+    pub peer_id: u64,
+    #[prost(message, optional, tag = "3")]
+    pub shard_key: ::core::option::Option<ShardKey>,
 }
 #[derive(serde::Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

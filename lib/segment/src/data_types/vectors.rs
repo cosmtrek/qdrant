@@ -21,15 +21,6 @@ pub enum Vector {
     MultiDense(MultiDenseVectorInternal),
 }
 
-impl Vector {
-    pub fn is_sparse(&self) -> bool {
-        match self {
-            Vector::Sparse(_) => true,
-            Vector::Dense(_) | Vector::MultiDense(_) => false,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum VectorRef<'a> {
     Dense(&'a [VectorElementType]),
@@ -484,21 +475,22 @@ impl VectorStructInternal {
             VectorStructInternal::Named(v) => v.get(name).map(VectorRef::from),
         }
     }
-
-    pub fn into_all_vectors(self) -> NamedVectors<'static> {
-        match self {
-            VectorStructInternal::Single(v) => default_vector(v),
-            VectorStructInternal::MultiDense(v) => default_multi_vector(v),
-            VectorStructInternal::Named(v) => NamedVectors::from_map(v),
-        }
-    }
 }
 
 /// Dense vector data with name
+
+fn named_vector_example() -> NamedVector {
+    NamedVector {
+        vector: vec![0.875, 0.140625, -0.15625, 0.96875],
+        name: "image".to_string(),
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct NamedVector {
     /// Name of vector data
+    #[schemars(example = "named_vector_example")]
     pub name: String,
     /// Vector data
     pub vector: DenseVector,
@@ -514,10 +506,20 @@ pub struct NamedMultiDenseVector {
 }
 
 /// Sparse vector data with name
+fn named_sparse_vector_example() -> NamedSparseVector {
+    NamedSparseVector {
+        vector: SparseVector {
+            indices: vec![0, 1, 6, 9],
+            values: vec![0.875, 0.140625, -0.15625, 0.96875],
+        },
+        name: "keyword".to_string(),
+    }
+}
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Validate, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct NamedSparseVector {
     /// Name of vector data
+    #[schemars(example = "named_sparse_vector_example")]
     pub name: String,
     /// Vector data
     #[validate]

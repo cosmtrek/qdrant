@@ -6,7 +6,7 @@ use tempfile::{Builder, TempDir};
 
 use super::*;
 use crate::common::rocksdb_wrapper::open_db_with_existing_cf;
-use crate::json_path::path;
+use crate::json_path::JsonPath;
 
 const COLUMN_NAME: &str = "test";
 
@@ -43,7 +43,7 @@ fn random_index(
 
     // if immutable, we have to reload the index
     if immutable {
-        let db_ref = index.get_db_wrapper().database.clone();
+        let db_ref = index.get_db_wrapper().get_database();
         let mut new_index: NumericIndex<f64> = NumericIndex::new(db_ref, COLUMN_NAME, false);
         new_index.load().unwrap();
         (temp_dir, new_index)
@@ -59,7 +59,7 @@ fn cardinality_request(
     let estimation = index.range_cardinality(&RangeInterface::Float(query.clone()));
 
     let result = index
-        .filter(&FieldCondition::new_range(path("unused"), query))
+        .filter(&FieldCondition::new_range(JsonPath::new("unused"), query))
         .unwrap()
         .unique()
         .collect_vec();
@@ -161,22 +161,30 @@ fn test_cardinality_exp(#[case] immutable: bool) {
 fn test_payload_blocks(#[case] immutable: bool) {
     let (_temp_dir, index) = random_index(1000, 2, immutable);
     let threshold = 100;
-    let blocks = index.payload_blocks(threshold, path("test")).collect_vec();
+    let blocks = index
+        .payload_blocks(threshold, JsonPath::new("test"))
+        .collect_vec();
     assert!(!blocks.is_empty());
     eprintln!("threshold {threshold}, blocks.len() = {:#?}", blocks.len());
 
     let threshold = 500;
-    let blocks = index.payload_blocks(threshold, path("test")).collect_vec();
+    let blocks = index
+        .payload_blocks(threshold, JsonPath::new("test"))
+        .collect_vec();
     assert!(!blocks.is_empty());
     eprintln!("threshold {threshold}, blocks.len() = {:#?}", blocks.len());
 
     let threshold = 1000;
-    let blocks = index.payload_blocks(threshold, path("test")).collect_vec();
+    let blocks = index
+        .payload_blocks(threshold, JsonPath::new("test"))
+        .collect_vec();
     assert!(!blocks.is_empty());
     eprintln!("threshold {threshold}, blocks.len() = {:#?}", blocks.len());
 
     let threshold = 10000;
-    let blocks = index.payload_blocks(threshold, path("test")).collect_vec();
+    let blocks = index
+        .payload_blocks(threshold, JsonPath::new("test"))
+        .collect_vec();
     assert!(!blocks.is_empty());
     eprintln!("threshold {threshold}, blocks.len() = {:#?}", blocks.len());
 }
@@ -213,7 +221,7 @@ fn test_payload_blocks_small(#[case] immutable: bool) {
 
     // if immutable, we have to reload the index
     let index = if immutable {
-        let db_ref = index.get_db_wrapper().database.clone();
+        let db_ref = index.get_db_wrapper().get_database();
         let mut new_index: NumericIndex<f64> = NumericIndex::new(db_ref, COLUMN_NAME, false);
         new_index.load().unwrap();
         new_index
@@ -221,7 +229,9 @@ fn test_payload_blocks_small(#[case] immutable: bool) {
         index
     };
 
-    let blocks = index.payload_blocks(threshold, path("test")).collect_vec();
+    let blocks = index
+        .payload_blocks(threshold, JsonPath::new("test"))
+        .collect_vec();
     assert!(!blocks.is_empty());
 }
 
@@ -255,7 +265,7 @@ fn test_numeric_index_load_from_disk(#[case] immutable: bool) {
 
     index.flusher()().unwrap();
 
-    let db_ref = index.get_db_wrapper().database.clone();
+    let db_ref = index.get_db_wrapper().get_database();
     let mut new_index: NumericIndex<f64> = NumericIndex::new(db_ref, COLUMN_NAME, !immutable);
     new_index.load().unwrap();
 
@@ -303,7 +313,7 @@ fn test_numeric_index(#[case] immutable: bool) {
 
     // if immutable, we have to reload the index
     let index = if immutable {
-        let db_ref = index.get_db_wrapper().database.clone();
+        let db_ref = index.get_db_wrapper().get_database();
         let mut new_index: NumericIndex<f64> = NumericIndex::new(db_ref, COLUMN_NAME, false);
         new_index.load().unwrap();
         new_index
@@ -372,7 +382,7 @@ fn test_cond<T: Encodable + Numericable + PartialOrd + Clone + Default>(
     rng: Range<FloatPayloadType>,
     result: Vec<u32>,
 ) {
-    let condition = FieldCondition::new_range(path("unused"), rng);
+    let condition = FieldCondition::new_range(JsonPath::new("unused"), rng);
     let offsets = index.filter(&condition).unwrap().collect_vec();
     assert_eq!(offsets, result);
 }
